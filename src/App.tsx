@@ -26,7 +26,7 @@ function Planet({body,selected,onSelect,trailOn}:{body:Body3D;selected:boolean;o
  return <group position={pos}>
   {body.id==="sun"&&<><mesh><sphereGeometry args={[r*4,24,24]}/><meshBasicMaterial color={body.color} transparent opacity={.07}/></mesh><pointLight color={body.color} intensity={2.2} distance={15}/></>}
   {selected&&<mesh><sphereGeometry args={[r*1.8,20,20]}/><meshBasicMaterial color="#b7d0ff" wireframe transparent opacity={.65}/></mesh>}
-  <mesh ref={mesh} onClick={e=>{e.stopPropagation();onSelect();}}><sphereGeometry args={[r,32,32]}/><meshStandardMaterial color={body.color} emissive={body.color} emissiveIntensity={body.id==="sun"?.9:.12} roughness={.72} metalness={.05}/></mesh>
+  <mesh ref={mesh} onClick={e=>{e.stopPropagation();onSelect();}}><sphereGeometry args={[r,64,64]}/>{body.id==="earth"?<EarthSurface/>:<meshStandardMaterial color={body.color} emissive={body.color} emissiveIntensity={body.id==="sun"?.9:.12} roughness={.72} metalness={.05}/>}</mesh>
 
   {trailOn&&body.trail3.length>1&&<Line points={body.trail3.filter((_,i)=>i%Math.max(1,Math.floor(body.trail3.length/700))===0).map(vec)} color={body.color} transparent opacity={.5} lineWidth={1}/>}
  </group>;
