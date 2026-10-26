@@ -2,7 +2,6 @@ import { G } from "./constants";
 import { add, isFiniteVector, scale, sub } from "./vector";
 import type { Body, PhysicsConfig, Vector2 } from "./types";
 
-
 export const DEFAULT_CONFIG: PhysicsConfig = {
   gravitationalConstant: G,
   softening: 1_000, // 1 km numerical guard, deliberately documented/configurable
