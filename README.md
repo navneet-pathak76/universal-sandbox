@@ -1,6 +1,6 @@
 # Universal Sandbox
 
-A **local-first interactive universe simulator** for experimenting with orbital mechanics. This is an educational Newtonian N-body model, not a claim of complete physical reality.
+A local-first 3D universe exploration and physics experiment project. Run locally; no Vercel deployment is required.
 
 ## Run locally
 
@@ -13,21 +13,34 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite (normally http://127.0.0.1:5173). No deployment or cloud account is required.
+Open the local URL printed by Vite, normally http://127.0.0.1:5173.
 
-## Current baseline
+## Current implemented stage
 
-- Interactive 2D canvas, body inspector, edit mass/position/velocity
-- Newtonian pairwise gravity with a configurable softening length
-- Fixed-step velocity-Verlet integration
-- Time scale, pause/reset, trails and velocity-vector display
-- Sun–Earth, inner-system, and binary-star teaching presets
-- Total energy and linear-momentum diagnostics
-- JSON import/export for user-created experiments
-- Core physics tests; model limitations and dataset provenance notes
+- WebGL 3D scene with orbit, zoom and pan camera controls.
+- Switchable **Deep Cosmos** and **Solar System** views.
+- Deterministically generated spiral-galaxy particle field, distant galaxy sprites, star field, and a stylized black-hole/accretion-disk visualization.
+- Solar-system teaching presets and a separate 3D Newtonian N-body integration module.
+- Body inspector, parameter controls, trails and JSON experiment import/export.
+- GitHub Actions CI runs physics tests and a TypeScript/Vite production build.
 
-## Scientific boundaries
+## Scientific status — read before interpreting images
 
-The initial version uses Newtonian gravity in 2D. It does not model general relativity, tides, radiation pressure, gas dynamics, stellar evolution, or all known objects. Presets are illustrative approximate initial conditions, not a reconstruction at a specific epoch. Visualization sizes are not to scale. A parameter experiment is not validation of a new physical law.
+**Deep Cosmos view is procedural visualization.** The spiral galaxies and black-hole accretion disk are generated for exploration and are not measured positions, a sourced map of the observable universe, or a general-relativistic calculation. The visual scene is not currently coupled to a cosmological structure-formation solver.
 
-Read [Physics model](docs/PHYSICS.md), [Data provenance](data/README.md), and [Contributing](CONTRIBUTING.md).
+The Solar System presets are approximate educational initial conditions, not epoch-aligned ephemerides. The 3D view does not yet provide a true photoreal Earth surface, terrain, live NASA/JPL catalogue ingestion, person-level imagery, galaxy-scale physical simulation, general relativity, stellar evolution, weather, life, or civilization simulation. These are roadmap items, not completed features.
+
+## Planned stages
+
+1. **Cosmos rendering foundation** — procedural galaxies, camera navigation, scene modes and explicit provenance labels.
+2. **Astronomical data layer** — ingest documented NASA/JPL sources with epochs, units, frame, uncertainty and attribution.
+3. **Planetary realism** — Earth day/night textures, clouds, atmosphere, terrain and scale-aware navigation using licensed/sourced datasets.
+4. **God Mode** — object creation and editing, checkpoints, branches, time controls, save/load and command console.
+5. **Physics expansion** — tested 3D N-body diagnostics, collision models and carefully bounded advanced models.
+6. **Cosmic/stellar models** — separate scientific models for structure formation, black holes, stellar evolution, planetary environments and optional life simulation.
+
+Each stage must be tested. A visually plausible rendering is not evidence of physical accuracy.
+
+## Data provenance
+
+See [data/README.md](data/README.md) and [docs/PHYSICS.md](docs/PHYSICS.md). Planned authoritative resources include NASA/JPL Solar System Dynamics and Horizons: https://ssd.jpl.nasa.gov/
