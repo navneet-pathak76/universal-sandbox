@@ -1,133 +1,63 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Atom, CircleHelp, Download, Pause, Play, RotateCcw, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
-import { AU, DAY, EARTH_MASS, G, YEAR } from "./physics/constants";
-import { cloneBodies, stepVelocityVerlet, totalEnergy, totalMomentum } from "./physics/engine";
-import { getPreset, PRESETS } from "./physics/presets";
-import type { Body, PhysicsConfig } from "./physics/types";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { Line, OrbitControls, Stars, Html } from "@react-three/drei";
+import * as THREE from "three";
+import { Activity, Atom, CircleHelp, Download, Pause, Play, RotateCcw, Upload, Orbit, Layers3, Gauge } from "lucide-react";
+import { AU, DAY, EARTH_MASS, G, SUN_MASS, YEAR } from "./physics/constants";
+import { cloneBodies, totalEnergy, totalMomentum } from "./physics/engine";
+import { PRESETS, getPreset } from "./physics/presets";
+import type { Body, PhysicsConfig, Vector2 } from "./physics/types";
+import { step3D, type Body3D, type Vec3 } from "./physics/engine3d";
 
-const fmt = (value: number, digits = 2) => new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
-const compact = (n: number) => {
-  if (!Number.isFinite(n)) return "—";
-  const a = Math.abs(n);
-  if (a >= 1e24 || (a > 0 && a < 1e-3)) return n.toExponential(2);
-  if (a >= 1e9) return `${fmt(n / 1e9)}B`;
-  if (a >= 1e6) return `${fmt(n / 1e6)}M`;
-  return fmt(n);
-};
-const uid = () => `body-${Math.random().toString(36).slice(2, 9)}`;
-
-function initialBody(): Body {
-  return { id:uid(),name:"Test body",mass:EARTH_MASS*0.1,radius:1_000_000,position:{x:1.7*AU,y:0.1*AU},velocity:{x:-3_000,y:18_000},color:"#b39bff",trail:[] };
+const fmt=(n:number,d=2)=>new Intl.NumberFormat("en-US",{maximumFractionDigits:d}).format(n);
+const compact=(n:number)=>!Number.isFinite(n)?"—":Math.abs(n)>=1e24||Math.abs(n)>0&&Math.abs(n)<1e-3?n.toExponential(2):fmt(n);
+const scaleSpace=1/AU;
+const to3=(b:Body):Body3D=>({...b,position3:{x:b.position.x,y:0,z:b.position.y},velocity3:{x:b.velocity.x,y:0,z:b.velocity.y},trail3:[]});
+const to2=(b:Body3D):Body=>({...b,position:{x:b.position3.x,y:b.position3.z},velocity:{x:b.velocity3.x,y:b.velocity3.z},trail:b.trail3.map(p=>({x:p.x,y:p.z}))});
+const uid=()=>`body-${Math.random().toString(36).slice(2,9)}`;
+function newBody():Body3D{return{id:uid(),name:"Experimental body",mass:EARTH_MASS*.1,radius:1_000_000,position:{x:0,y:0},velocity:{x:0,y:0},position3:{x:1.5*AU,y:.08*AU,z:.25*AU},velocity3:{x:-3_000,y:1_000,z:18_000},color:"#b49cff",trail:[],trail3:[]};}
+function vec(v:Vec3):[number,number,number]{return[v.x*scaleSpace,v.y*scaleSpace,v.z*scaleSpace];}
+function radius(b:Body3D){return b.id==="sun"?.105:Math.max(.022,Math.min(.06,.018+Math.log10(Math.max(1,b.mass/EARTH_MASS))*.007));}
+function Planet({body,selected,onSelect,trailOn}:{body:Body3D;selected:boolean;onSelect:()=>void;trailOn:boolean}){
+ const mesh=useRef<THREE.Mesh>(null); const r=radius(body);
+ useFrame(({clock})=>{if(mesh.current){mesh.current.rotation.y=clock.getElapsedTime()*.16;mesh.current.rotation.x=.12;}});
+ const pos=vec(body.position3);
+ return <group position={pos}>
+  {body.id==="sun"&&<><mesh><sphereGeometry args={[r*4,24,24]}/><meshBasicMaterial color={body.color} transparent opacity={.07}/></mesh><pointLight color={body.color} intensity={2.2} distance={15}/></>}
+  {selected&&<mesh><sphereGeometry args={[r*1.8,20,20]}/><meshBasicMaterial color="#b7d0ff" wireframe transparent opacity={.65}/></mesh>}
+  <mesh ref={mesh} onClick={e=>{e.stopPropagation();onSelect();}}><sphereGeometry args={[r,32,32]}/><meshStandardMaterial color={body.color} emissive={body.color} emissiveIntensity={body.id==="sun"?.9:.12} roughness={.72} metalness={.05}/></mesh>
+  <Html distanceFactor={14} position={[r+.045,r+.025,0]} style={{pointerEvents:"none",whiteSpace:"nowrap"}}><span className={selected?"planet-label active":"planet-label"}>{body.name}</span></Html>
+  {trailOn&&body.trail3.length>1&&<Line points={body.trail3.filter((_,i)=>i%Math.max(1,Math.floor(body.trail3.length/700))===0).map(vec)} color={body.color} transparent opacity={.5} lineWidth={1}/>}
+ </group>;
 }
-
-export default function App() {
-  const [presetId,setPresetId]=useState("inner-system");
-  const [bodies,setBodies]=useState<Body[]>(()=>getPreset("inner-system"));
-  const [selectedId,setSelectedId]=useState("earth");
-  const [running,setRunning]=useState(false);
-  const [speed,setSpeed]=useState(40);
-  const [dt,setDt]=useState(1800);
-  const [substeps,setSubsteps]=useState(2);
-  const [trailOn,setTrailOn]=useState(true);
-  const [showVectors,setShowVectors]=useState(false);
-  const [softeningKm,setSofteningKm]=useState(1);
-  const [viewScale,setViewScale]=useState(1);
-  const [simTime,setSimTime]=useState(0);
-  const [notice,setNotice]=useState("Ready. Pick a body or load a preset to begin.");
-  const [experimentalG,setExperimentalG]=useState(G);
-  const [customName,setCustomName]=useState("Newtonian gravity");
-  const [showHelp,setShowHelp]=useState(false);
-  const canvasRef=useRef<HTMLCanvasElement>(null);
-  const viewRef=useRef<HTMLDivElement>(null);
-  const simRef=useRef<Body[]>(bodies);
-  const timeRef=useRef(0);
-  const lastRef=useRef(0);
-  const selected=bodies.find(b=>b.id===selectedId)??bodies[0];
-  const config:PhysicsConfig=useMemo(()=>({gravitationalConstant:experimentalG,softening:softeningKm*1000}),[experimentalG,softeningKm]);
-  const diagnostics=useMemo(()=>({energy:totalEnergy(bodies,config),momentum:totalMomentum(bodies)}),[bodies,config]);
-
-  useEffect(()=>{simRef.current=bodies;},[bodies]);
-  useEffect(()=>{timeRef.current=simTime;},[simTime]);
-
-  useEffect(()=>{
-    const canvas=canvasRef.current, container=viewRef.current;
-    if(!canvas||!container)return;
-    const ctx=canvas.getContext("2d");if(!ctx)return;
-    let raf=0,publishCounter=0;
-    const resize=()=>{
-      const rect=container.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
-      canvas.width=Math.max(1,Math.floor(rect.width*dpr));canvas.height=Math.max(1,Math.floor(rect.height*dpr));
-      canvas.style.width=`${rect.width}px`;canvas.style.height=`${rect.height}px`;
-    };
-    resize();const observer=new ResizeObserver(resize);observer.observe(container);
-    const frame=(now:number)=>{
-      const w=container.clientWidth,h=container.clientHeight,dpr=Math.min(window.devicePixelRatio||1,2);
-      ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);drawBackdrop(ctx,w,h);
-      const current=simRef.current,centre=current.find(b=>b.id==="sun")?.position??current[0]?.position??{x:0,y:0};
-      const span=Math.max(1.5*AU,...current.map(b=>Math.hypot(b.position.x-centre.x,b.position.y-centre.y)));
-      const worldScale=Math.min(w,h)*0.43/span/viewScale,cx=w/2,cy=h/2;
-      const map=(p:{x:number;y:number})=>({x:cx+(p.x-centre.x)*worldScale,y:cy-(p.y-centre.y)*worldScale});
-      ctx.strokeStyle="rgba(160,181,224,.10)";ctx.lineWidth=1;
-      for(const b of current){if(b.id==="sun")continue;const p=map(b.position),r=Math.hypot(p.x-cx,p.y-cy);if(r>1&&r<Math.max(w,h)*3){ctx.beginPath();ctx.ellipse(cx,cy,r,r,0,0,Math.PI*2);ctx.stroke();}}
-      for(const b of current){if(trailOn&&b.trail.length>1){ctx.beginPath();b.trail.forEach((p,i)=>{const q=map(p);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);});ctx.strokeStyle=b.color+"88";ctx.lineWidth=1.15;ctx.stroke();}}
-      if(showVectors&&current.length<35)for(const b of current){const p=map(b.position),len=Math.min(44,Math.hypot(b.velocity.x,b.velocity.y)/1_100_000),angle=Math.atan2(-b.velocity.y,b.velocity.x);ctx.strokeStyle=b.color+"aa";ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x+Math.cos(angle)*len,p.y+Math.sin(angle)*len);ctx.stroke();}
-      for(const b of current){
-        const p=map(b.position),sel=b.id===selectedId,rad=Math.min(17,(b.id==="sun"?10:4)+Math.log10(Math.max(1,b.mass/EARTH_MASS))*1.25+(sel?2:0));
-        if(b.id==="sun"){const glow=ctx.createRadialGradient(p.x,p.y,2,p.x,p.y,38);glow.addColorStop(0,"rgba(255,187,83,.24)");glow.addColorStop(1,"rgba(255,187,83,0)");ctx.fillStyle=glow;ctx.beginPath();ctx.arc(p.x,p.y,38,0,Math.PI*2);ctx.fill();}
-        ctx.fillStyle=b.color;ctx.shadowColor=b.color;ctx.shadowBlur=sel?20:(b.id==="sun"?15:4);ctx.beginPath();ctx.arc(p.x,p.y,rad,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
-        if(sel){ctx.beginPath();ctx.arc(p.x,p.y,rad+6,0,Math.PI*2);ctx.strokeStyle="#ffffff";ctx.lineWidth=1;ctx.stroke();}
-        ctx.font=sel?"600 12px Inter, system-ui, sans-serif":"11px Inter, system-ui, sans-serif";ctx.fillStyle=sel?"#fff":"#b1bdcf";ctx.fillText(b.name,p.x+rad+7,p.y-rad-5);
-      }
-      // Use a wall-clock accumulator and deterministic fixed physics steps.
-      if(running){
-        if(lastRef.current>0){
-          
-          const steps=Math.max(1,Math.round(speed/10))*substeps;
-          const stepSeconds=dt;
-          let next=simRef.current;
-          try{for(let i=0;i<steps;i++)next=stepVelocityVerlet(next,stepSeconds,config);}
-          catch(err){setRunning(false);setNotice(err instanceof Error?err.message:"Numerical step failed.");}
-          timeRef.current+=steps*stepSeconds;
-          publishCounter++;
-          if(trailOn&&publishCounter%3===0)next=next.map(b=>({...b,trail:[...b.trail,{...b.position}].slice(-900)}));
-          simRef.current=next;
-          if(publishCounter%2===0){setBodies(next);setSimTime(timeRef.current);}
-        }
-        lastRef.current=now;
-      }else{lastRef.current=0;}
-      raf=requestAnimationFrame(frame);
-    };
-    raf=requestAnimationFrame(frame);return()=>{cancelAnimationFrame(raf);observer.disconnect();lastRef.current=0;};
-  },[running,speed,dt,substeps,trailOn,showVectors,selectedId,viewScale,config]);
-
-  function loadPreset(id:string){const next=getPreset(id);setPresetId(id);setBodies(next);simRef.current=next;setSelectedId(next.find(b=>b.id==="earth")?.id??next[0].id);setRunning(false);setSimTime(0);timeRef.current=0;setNotice(`Loaded ${PRESETS.find(p=>p.id===id)?.label??id}. Starting states are approximate.`);}
-  function reset(){const next=getPreset(presetId);setBodies(next);simRef.current=next;setSimTime(0);timeRef.current=0;setRunning(false);setNotice("Reset to preset initial conditions.");}
-  function updateSelected(patch:Partial<Body>){if(!selected)return;setBodies(old=>{const next=old.map(b=>b.id===selected.id?{...b,...patch}:b);simRef.current=next;return next;});setNotice("Body parameters changed. This is now a user-edited experiment.");}
-  function addBody(){const b=initialBody(),next=[...bodies,b];setBodies(next);simRef.current=next;setSelectedId(b.id);setNotice("Added an experimental body with illustrative starting values.");}
-  function deleteSelected(){if(!selected||bodies.length<2)return;const next=bodies.filter(b=>b.id!==selected.id);setBodies(next);simRef.current=next;setSelectedId(next[0].id);setNotice("Body removed.");}
-  function exportState(){const payload={schemaVersion:1,exportedAt:new Date().toISOString(),model:{name:customName,gravitationalConstant:config.gravitationalConstant,softeningM:config.softening,timeStepSeconds:dt,substeps},simulationTimeSeconds:simTime,bodies:bodies.map(({trail,...b})=>b),note:"State only. Presets are approximate and not epoch-aligned ephemerides."};const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="universal-sandbox-state.json";a.click();URL.revokeObjectURL(url);setNotice("Exported current state as JSON.");}
-  function importState(file?:File){if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const data=JSON.parse(String(reader.result));if(!Array.isArray(data.bodies)||data.bodies.length<1||data.bodies.length>500)throw new Error("Expected 1–500 bodies.");const valid:Body[]=data.bodies.map((b:any,i:number):Body=>{const out={id:String(b.id??`imported-${i}`),name:String(b.name??`Body ${i+1}`),mass:Number(b.mass),radius:Number(b.radius??1),position:{x:Number(b.position?.x),y:Number(b.position?.y)},velocity:{x:Number(b.velocity?.x),y:Number(b.velocity?.y)},color:String(b.color??"#90a5c9"),trail:[]};if(!(out.mass>0)||![out.mass,out.radius,out.position.x,out.position.y,out.velocity.x,out.velocity.y].every(Number.isFinite))throw new Error(`Invalid numeric field for ${out.name}`);return out;});const ids=valid.map(b=>b.id);if(new Set(ids).size!==ids.length)throw new Error("Body IDs must be unique.");const next=cloneBodies(valid);setBodies(next);simRef.current=next;setSelectedId(next[0].id);setRunning(false);setSimTime(0);timeRef.current=0;if(Number(data.model?.gravitationalConstant)>0)setExperimentalG(Number(data.model.gravitationalConstant));if(Number(data.model?.softeningM)>=0)setSofteningKm(Number(data.model.softeningM)/1000);setNotice("Imported user-authored model. Verify units and assumptions before interpreting results.");}catch(e){setNotice(e instanceof Error?`Import failed: ${e.message}`:"Import failed: invalid JSON.");}};reader.readAsText(file);}
-
-  const orbitRadius=selected?Math.hypot(selected.position.x,selected.position.y)/AU:0;
-  return <main className="app-shell">
-    <header className="topbar"><div className="brand-lockup"><div className="brand-mark"><Atom size={21}/></div><div><div className="brand-name">UNIVERSAL <span>SANDBOX</span></div><div className="brand-sub">LOCAL UNIVERSE LAB / BUILD 0.1</div></div></div><div className="topbar-meta"><span className="local-indicator"><i/> LOCAL SIMULATION</span><button className="icon-button" title="Physics guide" onClick={()=>setShowHelp(v=>!v)}><CircleHelp size={17}/></button></div></header>
-    <section className="intro-row"><div><div className="eyebrow"><span className="eyebrow-line"/> GRAVITY · ORBITS · EXPERIMENTS</div><h1>Explore the rules<br/><em>of the universe.</em></h1><p className="intro-copy">A physics sandbox for building systems, testing assumptions, and watching gravity unfold in real time.</p></div><div className="intro-stats"><div><span className="stat-label">MODEL</span><b>Newtonian N-body</b></div><div><span className="stat-label">SPACE</span><b>2D · SI units</b></div><div><span className="stat-label">MODE</span><b>Local-first</b></div></div></section>
-    {showHelp&&<section className="help-panel"><strong>Scientific status matters.</strong> Newtonian gravity, configurable softening, fixed-step velocity-Verlet. Presets are approximate teaching states, not precision ephemerides. Changing a parameter creates an experiment, not a validated new law. Read <code>docs/PHYSICS.md</code> and <code>data/README.md</code>.</section>}
-    <section className="workspace"><div className="scene-panel">
-      <div className="scene-toolbar"><div className="panel-heading"><span className="live-dot"/><span>SYSTEM VIEW</span><small>INTERACTIVE CANVAS</small></div><div className="scene-actions"><button className="tool-button" onClick={()=>setTrailOn(v=>!v)} aria-pressed={trailOn}>TRAILS {trailOn?"ON":"OFF"}</button><button className="tool-button" onClick={()=>setShowVectors(v=>!v)} aria-pressed={showVectors}>VECTORS {showVectors?"ON":"OFF"}</button><button className="tool-button" onClick={exportState}><Download size={13}/> EXPORT</button><label className="tool-button upload-button"><Upload size={13}/> IMPORT<input type="file" accept="application/json,.json" onChange={e=>importState(e.target.files?.[0])}/></label></div></div>
-      <div className="canvas-wrap" ref={viewRef}><canvas ref={canvasRef} onClick={e=>{const rect=e.currentTarget.getBoundingClientRect(),x=e.clientX-rect.left-rect.width/2,y=e.clientY-rect.top-rect.height/2;const current=simRef.current,centre=current.find(b=>b.id==="sun")?.position??current[0].position,span=Math.max(1.5*AU,...current.map(b=>Math.hypot(b.position.x-centre.x,b.position.y-centre.y))),s=Math.min(rect.width,rect.height)*.43/span/viewScale;let best:Body|undefined,dist=28;for(const b of current){const px=(b.position.x-centre.x)*s,py=-(b.position.y-centre.y)*s,d=Math.hypot(px-x,py-y);if(d<dist){dist=d;best=b;}}if(best)setSelectedId(best.id);}}/><div className="canvas-coordinate">FRAME: SYSTEM-CENTRED / ILLUSTRATIVE</div><div className="scale-control"><span>ZOOM</span><input aria-label="Zoom" type="range" min=".65" max="7" step=".05" value={viewScale} onChange={e=>setViewScale(Number(e.target.value))}/></div><div className="canvas-overlay"><div className="overlay-chip"><i/> {running?"SIMULATION RUNNING":"SIMULATION PAUSED"}</div><div className="overlay-time">T+ {fmt(simTime/YEAR,4)} <span>YR</span></div></div></div>
-      <div className="transport"><div className="transport-controls"><button className={running?"transport-main active":"transport-main"} onClick={()=>setRunning(v=>!v)}>{running?<Pause size={16} fill="currentColor"/>:<Play size={16} fill="currentColor"/>}{running?"PAUSE":"RUN SIMULATION"}</button><button className="transport-reset" onClick={reset}><RotateCcw size={15}/> RESET</button></div><div className="speed-control"><span>TIME SCALE</span><input type="range" min="1" max="400" step="1" value={speed} onChange={e=>setSpeed(Number(e.target.value))}/><b>{speed}×</b></div></div>
-      <div className="statusline"><span><Activity size={13}/>{notice}</span><span className="mono">{bodies.length} BODIES</span></div>
-    </div><aside className="side-panel">
-      <div className="side-section"><div className="section-title"><span>01 / SYSTEM PRESETS</span><Sparkles size={15}/></div><p className="section-description">Start with a reference configuration, then change its rules.</p><div className="preset-list">{PRESETS.map((p,i)=><button key={p.id} className={presetId===p.id?"preset-card selected":"preset-card"} onClick={()=>loadPreset(p.id)}><span className="preset-index">0{i+1}</span><span className="preset-content"><b>{p.label}</b><small>{p.description}</small></span><span className="preset-arrow">↗</span></button>)}</div><button className="add-body" onClick={addBody}>＋ ADD EXPERIMENTAL BODY</button></div>
-      <div className="side-section body-editor"><div className="section-title"><span>02 / BODY INSPECTOR</span><SlidersHorizontal size={15}/></div>{selected?<div className="body-fields"><div className="selected-body-heading"><span className="body-swatch" style={{background:selected.color}}/><div><b>{selected.name}</b><small>{selected.id}</small></div><button className="delete-body" onClick={deleteSelected} disabled={bodies.length<2} title="Delete selected body">×</button></div><label className="field-label">SELECT BODY<select value={selectedId} onChange={e=>setSelectedId(e.target.value)}>{bodies.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label><label className="field-label">BODY NAME<input value={selected.name} onChange={e=>updateSelected({name:e.target.value})}/></label><NumberField label="MASS (EARTH MASSES)" value={selected.mass/EARTH_MASS} min={1e-6} max={1e12} step="any" onChange={n=>updateSelected({mass:n*EARTH_MASS})}/><NumberField label="POSITION X (AU)" value={selected.position.x/AU} onChange={n=>updateSelected({position:{...selected.position,x:n*AU}})}/><NumberField label="POSITION Y (AU)" value={selected.position.y/AU} onChange={n=>updateSelected({position:{...selected.position,y:n*AU}})}/><NumberField label="VELOCITY X (KM/S)" value={selected.velocity.x/1000} onChange={n=>updateSelected({velocity:{...selected.velocity,x:n*1000}})}/><NumberField label="VELOCITY Y (KM/S)" value={selected.velocity.y/1000} onChange={n=>updateSelected({velocity:{...selected.velocity,y:n*1000}})}/><div className="body-facts"><div><small>RADIUS FROM ORIGIN</small><b>{fmt(orbitRadius,3)} AU</b></div><div><small>SPEED</small><b>{fmt(Math.hypot(selected.velocity.x,selected.velocity.y)/1000,2)} km/s</b></div></div></div>:<div className="empty-state">No body selected.</div>}</div>
-      <div className="side-section"><div className="section-title"><span>03 / MODEL PARAMETERS</span></div><label className="field-label">FORCE MODEL NAME<input value={customName} onChange={e=>setCustomName(e.target.value)}/></label><label className="field-label">GRAVITATIONAL CONSTANT (G)<input type="number" value={experimentalG.toExponential(5)} onChange={e=>setExperimentalG(Math.max(0,Number(e.target.value)||0))}/><small className="field-hint">SI: m³ kg⁻¹ s⁻² · conventional ≈ 6.67430e−11</small></label><div className="range-field"><label>SOFTENING LENGTH</label><b>{fmt(softeningKm)} km</b><input type="range" min="0" max="50000" step="1" value={softeningKm} onChange={e=>setSofteningKm(Number(e.target.value))}/></div><div className="two-fields"><label className="field-label">STEP SIZE (SECONDS)<input type="number" min="1" max="86400" value={dt} onChange={e=>setDt(Math.max(1,Math.min(86400,Number(e.target.value)||1)))}/></label><label className="field-label">SUBSTEPS<select value={substeps} onChange={e=>setSubsteps(Number(e.target.value))}>{[1,2,4,8,16].map(n=><option key={n} value={n}>{n}×</option>)}</select></label></div><p className="experimental-note"><span>!</span> Parameter edits are experimental. Smaller steps usually improve numerical resolution but increase computation.</p></div>
-    </aside></section>
-    <section className="metrics-grid"><Metric label="SIMULATED TIME" value={`${fmt(simTime/DAY,2)} days`} detail={`${fmt(simTime/YEAR,5)} Julian years`}/><Metric label="TOTAL ENERGY" value={compact(diagnostics.energy)+" J"} detail="Kinetic + softened potential"/><Metric label="LINEAR MOMENTUM" value={compact(Math.hypot(diagnostics.momentum.x,diagnostics.momentum.y))} detail="kg · m/s · total vector magnitude"/><Metric label="ENERGY SCALE" value={compact(Math.abs(diagnostics.energy)||1)+" J"} detail="Magnitude; monitor drift across runs"/></section>
-    <section className="footer-callout"><div className="footer-icon"><Atom size={19}/></div><div><b>Test an idea. Keep the evidence separate.</b><p>Universal Sandbox distinguishes classical assumptions, approximate input data, and your own experiments. A visually convincing orbit is not by itself evidence of physical accuracy.</p></div><button onClick={()=>setShowHelp(v=>!v)}>READ MODEL NOTES ↗</button></section>
-    <footer><span>UNIVERSAL SANDBOX <span className="footer-sep">/</span> LOCAL-FIRST SIMULATION</span><span>BUILT FOR EXPLORATION, NOT CERTAINTY</span></footer>
-  </main>;
+function Scene({bodies,selectedId,onSelect,running,trailOn,simSpeed,stepSeconds,substeps,config,onTick}:{bodies:Body3D[];selectedId:string;onSelect:(id:string)=>void;running:boolean;trailOn:boolean;simSpeed:number;stepSeconds:number;substeps:number;config:PhysicsConfig;onTick:(b:Body3D[],dt:number)=>void}){
+ const acc=useRef(0); const last=useRef(0);
+ useFrame((state,delta)=>{if(!running)return;acc.current+=Math.min(delta,.05)*simSpeed;const step=stepSeconds;let n=Math.min(10,Math.floor(acc.current/Math.max(step/86400,.001)));if(n<1)n=1;acc.current=0;let next=bodies;try{for(let i=0;i<substeps;i++)next=step3D(next,step,config);if(n>1)for(let j=1;j<Math.min(n,4);j++)for(let i=0;i<substeps;i++)next=step3D(next,step,config);}catch(e){console.error(e);return;}onTick(next,step*substeps*Math.min(n,4));last.current=state.clock.elapsedTime;});
+ return <><color attach="background" args={["#030712"]}/><fog attach="fog" args={["#030712",22,90]}/><ambientLight intensity={.32}/><Stars radius={100} depth={65} count={4500} factor={4} saturation={.15} fade speed={.25}/><gridHelper args={[40,40,"#1a3150","#0c1a2d"]} position={[0,-.12,0]}/><axesHelper args={[1.2]}/>{bodies.map(b=><Planet key={b.id} body={b} selected={b.id===selectedId} onSelect={()=>onSelect(b.id)} trailOn={trailOn}/>)}<OrbitControls makeDefault enableDamping dampingFactor={.06} minDistance={1.2} maxDistance={65} rotateSpeed={.65} zoomSpeed={.8}/></>;
 }
-function NumberField({label,value,onChange,min=-1e12,max=1e12,step=0.01}:{label:string;value:number;onChange:(n:number)=>void;min?:number;max?:number;step?:string|number}){return <label className="field-label">{label}<input type="number" min={min} max={max} step={step} value={Number.isFinite(value)?Number(value.toPrecision(9)):0} onChange={e=>onChange(Math.max(min,Math.min(max,Number(e.target.value)||0)))}/></label>;}
-function Metric({label,value,detail}:{label:string;value:string;detail:string}){return <div className="metric-card"><span>{label}</span><b>{value}</b><small>{detail}</small></div>;}
-function drawBackdrop(ctx:CanvasRenderingContext2D,w:number,h:number){const grad=ctx.createRadialGradient(w*.48,h*.5,0,w*.48,h*.5,Math.max(w,h)*.7);grad.addColorStop(0,"#101929");grad.addColorStop(.6,"#090e19");grad.addColorStop(1,"#070a11");ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);ctx.fillStyle="rgba(196,211,255,.35)";for(let i=0;i<75;i++){const x=((i*173+29)%997)/997*w,y=((i*317+53)%991)/991*h,r=i%5===0?1.2:.55;ctx.globalAlpha=.2+(i%7)*.08;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;ctx.strokeStyle="rgba(116,139,181,.06)";ctx.lineWidth=1;const gap=48;for(let x=(w/2)%gap;x<w;x+=gap){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}for(let y=(h/2)%gap;y<h;y+=gap){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}}
+export default function App(){
+ const [presetId,setPresetId]=useState("inner-system");
+ const [bodies,setBodies]=useState<Body3D[]>(()=>getPreset("inner-system").map(to3));
+ const [selectedId,setSelectedId]=useState("earth");
+ const [running,setRunning]=useState(false);const [speed,setSpeed]=useState(1);const [dt,setDt]=useState(1800);const [substeps,setSubsteps]=useState(2);
+ const [trailOn,setTrailOn]=useState(true);const [softeningKm,setSofteningKm]=useState(1);const [gValue,setGValue]=useState(G);const [simTime,setSimTime]=useState(0);const [notice,setNotice]=useState("Drag to orbit · scroll to zoom · click a body to inspect");const [showHelp,setShowHelp]=useState(false);const [showAxes,setShowAxes]=useState(true);
+ const selected=bodies.find(b=>b.id===selectedId)??bodies[0];const config=useMemo(()=>({gravitationalConstant:gValue,softening:softeningKm*1000}),[gValue,softeningKm]);
+ const as2=bodies.map(to2);const energy=totalEnergy(as2,config);const momentum=totalMomentum(as2);
+ function loadPreset(id:string){const next=getPreset(id).map(to3);setPresetId(id);setBodies(next);setSelectedId(next.find(b=>b.id==="earth")?.id??next[0].id);setRunning(false);setSimTime(0);setNotice("Preset loaded. Initial conditions are illustrative, not epoch-matched ephemerides.");}
+ function tick(next:Body3D[],elapsed:number){setBodies(next.map(b=>({...b,trail3:trailOn?[...b.trail3,b.position3].slice(-900):[]})));setSimTime(t=>t+elapsed);}
+ function patch(p:Partial<Body3D>){setBodies(old=>old.map(b=>b.id===selectedId?{...b,...p}:b));setNotice("Edited body state: experimental initial conditions.");}
+ function exportJson(){const data={schemaVersion:2,model:"3D Newtonian N-body",gravitationalConstant:gValue,softeningM:config.softening,timeStepSeconds:dt,substeps,simulationTimeSeconds:simTime,bodies:bodies.map(({trail,trail3,...b})=>b),provenance:"Built-in preset states are illustrative; not ephemeris-grade."};const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));a.download="universal-sandbox-3d.json";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
+ function importJson(file?:File){if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const data=JSON.parse(String(reader.result));if(!Array.isArray(data.bodies)||!data.bodies.length||data.bodies.length>500)throw new Error("Expected 1–500 bodies");const next:Body3D[]=data.bodies.map((b:any,i:number)=>({id:String(b.id??`import-${i}`),name:String(b.name??`Body ${i+1}`),mass:Number(b.mass),radius:Number(b.radius??1),position:{x:Number(b.position?.x??0),y:Number(b.position?.y??0)},velocity:{x:Number(b.velocity?.x??0),y:Number(b.velocity?.y??0)},position3:{x:Number(b.position3?.x??b.position?.x??0),y:Number(b.position3?.y??0),z:Number(b.position3?.z??b.position?.y??0)},velocity3:{x:Number(b.velocity3?.x??b.velocity?.x??0),y:Number(b.velocity3?.y??0),z:Number(b.velocity3?.z??b.velocity?.y??0)},color:String(b.color??"#9bbcff"),trail:[],trail3:[]}));if(next.some(b=>!(b.mass>0)||![b.mass,b.position3.x,b.position3.y,b.position3.z,b.velocity3.x,b.velocity3.y,b.velocity3.z].every(Number.isFinite)))throw new Error("Invalid body values");setBodies(next);setSelectedId(next[0].id);setRunning(false);setSimTime(0);setNotice("Imported 3D experiment. Confirm SI units before running.");}catch(e){setNotice(e instanceof Error?e.message:"Import failed");}};reader.readAsText(file);}
+ return <main className="universe-app">
+ <header className="u-topbar"><div className="u-brand"><div className="u-logo"><Atom size={22}/></div><div><b>UNIVERSAL <span>SANDBOX</span></b><small>3D UNIVERSE LAB / LOCAL BUILD</small></div></div><div className="u-topright"><span className="u-live"><i/> LIVE PHYSICS ENGINE</span><button className="u-icon" onClick={()=>setShowHelp(v=>!v)} title="Physics notes"><CircleHelp size={17}/></button></div></header>
+ <section className="u-hero"><div><div className="u-kicker">SPACETIME IS NOT A FLAT SCREEN</div><h1>Step inside<br/><em>the universe.</em></h1><p>Explore a three-dimensional gravitational sandbox. Orbit the camera, move through space, and experiment with bodies in X, Y and Z.</p></div><div className="u-hero-metrics"><div><small>DIMENSIONS</small><b>3D / X · Y · Z</b></div><div><small>GRAVITY</small><b>Newtonian N-body</b></div><div><small>RENDERER</small><b>WebGL</b></div></div></section>
+ {showHelp&&<div className="u-note"><b>Scientific boundaries:</b> 3D rendering is not the same as a complete physical universe. This build models Newtonian gravity in three spatial dimensions. Presets are approximate and omit relativity, collisions, stellar evolution, radiation and many other phenomena. See <code>docs/PHYSICS.md</code>.</div>}
+ <section className="u-stage"><div className="u-stage-head"><div><span className="u-green-dot"/> 3D SPACE VIEW <small>DRAG · ZOOM · SELECT</small></div><div className="u-stage-actions"><button onClick={()=>setTrailOn(v=>!v)}>{trailOn?"TRAILS ON":"TRAILS OFF"}</button><button onClick={exportJson}><Download size={13}/> EXPORT</button><label><Upload size={13}/> IMPORT<input type="file" accept=".json,application/json" onChange={e=>importJson(e.target.files?.[0])}/></label></div></div>
+ <div className="u-canvas"><Canvas camera={{position:[0,8,15],fov:50,near:.01,far:1000}} dpr={[1,2]} gl={{antialias:true,alpha:false}}><Suspense fallback={null}><Scene bodies={bodies} selectedId={selectedId} onSelect={setSelectedId} running={running} trailOn={trailOn} simSpeed={speed} stepSeconds={dt} substeps={substeps} config={config} onTick={tick}/></Suspense></Canvas><div className="u-hud"><span>{running?"● SIMULATION RUNNING":"Ⅱ SIMULATION PAUSED"}</span><b>T+ {fmt(simTime/YEAR,5)} <small>YEARS</small></b></div><div className="u-axis-legend"><span><i className="x"/> X</span><span><i className="y"/> Y</span><span><i className="z"/> Z</span></div><div className="u-canvas-hint">LEFT DRAG: ORBIT <span>·</span> SCROLL: ZOOM <span>·</span> RIGHT DRAG: PAN</div></div>
+ <div className="u-transport"><div><button className="u-run" onClick={()=>setRunning(v=>!v)}>{running?<Pause size={16}/>:<Play size={16} fill="currentColor"/>}{running?"PAUSE":"RUN SIMULATION"}</button><button className="u-reset" onClick={()=>loadPreset(presetId)}><RotateCcw size={14}/> RESET</button></div><label>SIM SPEED <input type="range" min=".1" max="8" step=".1" value={speed} onChange={e=>setSpeed(Number(e.target.value))}/><b>{speed.toFixed(1)}×</b></label></div><div className="u-status"><Activity size={14}/>{notice}<span>{bodies.length} BODIES</span></div></section>
+ <section className="u-lower"><aside className="u-card"><div className="u-card-title">01 / SYSTEM PRESETS <Orbit size={15}/></div><p>Choose a system to load its starting conditions.</p>{PRESETS.map((p,i)=><button className={presetId===p.id?"u-preset active":"u-preset"} key={p.id} onClick={()=>loadPreset(p.id)}><small>0{i+1}</small><span><b>{p.label}</b><em>{p.description}</em></span><span>↗</span></button>)}<button className="u-add" onClick={()=>{const b=newBody();setBodies(old=>[...old,b]);setSelectedId(b.id);setNotice("Added experimental 3D body.");}}>＋ ADD 3D BODY</button></aside>
+ <aside className="u-card"><div className="u-card-title">02 / BODY INSPECTOR <Layers3 size={15}/></div>{selected?<><label className="u-field">SELECT BODY<select value={selectedId} onChange={e=>setSelectedId(e.target.value)}>{bodies.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label><label className="u-field">NAME<input value={selected.name} onChange={e=>patch({name:e.target.value})}/></label><label className="u-field">MASS (EARTH MASSES)<input type="number" min=".000001" value={Number((selected.mass/EARTH_MASS).toPrecision(6))} onChange={e=>patch({mass:Math.max(1,Number(e.target.value)||1)*EARTH_MASS})}/></label><div className="u-coords"><Coordinate label="X POSITION / AU" value={selected.position3.x/AU} change={n=>patch({position3:{...selected.position3,x:n*AU}})}/><Coordinate label="Y POSITION / AU" value={selected.position3.y/AU} change={n=>patch({position3:{...selected.position3,y:n*AU}})}/><Coordinate label="Z POSITION / AU" value={selected.position3.z/AU} change={n=>patch({position3:{...selected.position3,z:n*AU}})}/><Coordinate label="VX / KM/S" value={selected.velocity3.x/1000} change={n=>patch({velocity3:{...selected.velocity3,x:n*1000}})}/><Coordinate label="VY / KM/S" value={selected.velocity3.y/1000} change={n=>patch({velocity3:{...selected.velocity3,y:n*1000}})}/><Coordinate label="VZ / KM/S" value={selected.velocity3.z/1000} change={n=>patch({velocity3:{...selected.velocity3,z:n*1000}})}/></div><button className="u-remove" disabled={bodies.length<2} onClick={()=>{const next=bodies.filter(b=>b.id!==selectedId);setBodies(next);setSelectedId(next[0].id);}}>REMOVE SELECTED BODY ×</button></>:null}</aside>
+ <aside className="u-card"><div className="u-card-title">03 / PHYSICS PARAMETERS <Gauge size={15}/></div><label className="u-field">GRAVITATIONAL CONSTANT<input type="number" value={gValue.toExponential(5)} onChange={e=>setGValue(Math.max(0,Number(e.target.value)||0))}/><small>m³ kg⁻¹ s⁻²</small></label><label className="u-field">SOFTENING LENGTH <b>{fmt(softeningKm)} km</b><input type="range" min="0" max="50000" value={softeningKm} onChange={e=>setSofteningKm(Number(e.target.value))}/></label><label className="u-field">TIME STEP (SECONDS)<input type="number" min="1" max="86400" value={dt} onChange={e=>setDt(Math.max(1,Math.min(86400,Number(e.target.value)||1)))}/></label><label className="u-field">SUBSTEPS<select value={substeps} onChange={e=>setSubsteps(Number(e.target.value))}>{[1,2,4,8,16].map(n=><option key={n}>{n}</option>)}</select></label><div className="u-diagnostic"><small>TOTAL ENERGY</small><b>{compact(energy)} J</b><small>LINEAR MOMENTUM</small><b>{compact(Math.hypot(momentum.x,momentum.y))} kg·m/s</b></div></aside></section>
+ <footer className="u-footer">UNIVERSAL SANDBOX <span>3D NEWTONIAN MODEL · LOCAL FIRST · NO DEPLOYMENT</span></footer></main>;
+}
+function Coordinate({label,value,change}:{label:string;value:number;change:(n:number)=>void}){return <label className="u-field">{label}<input type="number" value={Number(value.toPrecision(7))} onChange={e=>change(Number(e.target.value)||0)}/></label>;}
