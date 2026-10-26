@@ -1,12 +1,12 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Line, OrbitControls, Stars, Html } from "@react-three/drei";
+import { Line, OrbitControls, Stars } from "@react-three/drei";
 import * as THREE from "three";
 import { Activity, Atom, CircleHelp, Download, Pause, Play, RotateCcw, Upload, Orbit, Layers3, Gauge } from "lucide-react";
-import { AU, DAY, EARTH_MASS, G, SUN_MASS, YEAR } from "./physics/constants";
-import { cloneBodies, totalEnergy, totalMomentum } from "./physics/engine";
+import { AU, EARTH_MASS, G, YEAR } from "./physics/constants";
+import { totalEnergy, totalMomentum } from "./physics/engine";
 import { PRESETS, getPreset } from "./physics/presets";
-import type { Body, PhysicsConfig, Vector2 } from "./physics/types";
+import type { Body, PhysicsConfig } from "./physics/types";
 import { step3D, type Body3D, type Vec3 } from "./physics/engine3d";
 
 const fmt=(n:number,d=2)=>new Intl.NumberFormat("en-US",{maximumFractionDigits:d}).format(n);
@@ -18,7 +18,7 @@ const uid=()=>`body-${Math.random().toString(36).slice(2,9)}`;
 function newBody():Body3D{return{id:uid(),name:"Experimental body",mass:EARTH_MASS*.1,radius:1_000_000,position:{x:0,y:0},velocity:{x:0,y:0},position3:{x:1.5*AU,y:.08*AU,z:.25*AU},velocity3:{x:-3_000,y:1_000,z:18_000},color:"#b49cff",trail:[],trail3:[]};}
 function vec(v:Vec3):[number,number,number]{return[v.x*scaleSpace,v.y*scaleSpace,v.z*scaleSpace];}
 function radius(b:Body3D){return b.id==="sun"?.105:Math.max(.022,Math.min(.06,.018+Math.log10(Math.max(1,b.mass/EARTH_MASS))*.007));}
-function Planet({body,selected,onSelect,trailOn}:{body:Body3D;selected:boolean;onSelect:()=>void;trailOn:boolean}){
+function EarthSurface(){const material=useRef<THREE.MeshStandardMaterial>(null);useEffect(()=>{const loader=new THREE.TextureLoader();loader.setCrossOrigin("anonymous");loader.load("https://www.solarsystemscope.com/textures/download/2k_earth_daymap.jpg",t=>{if(material.current){t.colorSpace=THREE.SRGBColorSpace;material.current.map=t;material.current.needsUpdate=true;}});loader.load("https://www.solarsystemscope.com/textures/download/2k_earth_normal_map.png",t=>{if(material.current){material.current.normalMap=t;material.current.normalScale.set(.55,.55);material.current.needsUpdate=true;}});loader.load("https://www.solarsystemscope.com/textures/download/2k_earth_specular_map.png",t=>{if(material.current){material.current.roughnessMap=t;material.current.needsUpdate=true;}});},[]);return <meshStandardMaterial ref={material} color="#dcecff" roughness={.85}/>;}\nfunction Planet({body,selected,onSelect,trailOn}:{body:Body3D;selected:boolean;onSelect:()=>void;trailOn:boolean}){
  const mesh=useRef<THREE.Mesh>(null); const r=radius(body);
  useFrame(({clock})=>{if(mesh.current){mesh.current.rotation.y=clock.getElapsedTime()*.16;mesh.current.rotation.x=.12;}});
  const pos=vec(body.position3);
@@ -40,7 +40,7 @@ export default function App(){
  const [bodies,setBodies]=useState<Body3D[]>(()=>getPreset("inner-system").map(to3));
  const [selectedId,setSelectedId]=useState("earth");
  const [running,setRunning]=useState(false);const [speed,setSpeed]=useState(1);const [dt,setDt]=useState(1800);const [substeps,setSubsteps]=useState(2);
- const [trailOn,setTrailOn]=useState(true);const [softeningKm,setSofteningKm]=useState(1);const [gValue,setGValue]=useState(G);const [simTime,setSimTime]=useState(0);const [notice,setNotice]=useState("Drag to orbit · scroll to zoom · click a body to inspect");const [showHelp,setShowHelp]=useState(false);const [showAxes,setShowAxes]=useState(true);
+ const [trailOn,setTrailOn]=useState(true);const [softeningKm,setSofteningKm]=useState(1);const [gValue,setGValue]=useState(G);const [simTime,setSimTime]=useState(0);const [notice,setNotice]=useState("Drag to orbit · scroll to zoom · click a body to inspect");const [showHelp,setShowHelp]=useState(false);
  const selected=bodies.find(b=>b.id===selectedId)??bodies[0];const config=useMemo(()=>({gravitationalConstant:gValue,softening:softeningKm*1000}),[gValue,softeningKm]);
  const as2=bodies.map(to2);const energy=totalEnergy(as2,config);const momentum=totalMomentum(as2);
  function loadPreset(id:string){const next=getPreset(id).map(to3);setPresetId(id);setBodies(next);setSelectedId(next.find(b=>b.id==="earth")?.id??next[0].id);setRunning(false);setSimTime(0);setNotice("Preset loaded. Initial conditions are illustrative, not epoch-matched ephemerides.");}
