@@ -82,7 +82,7 @@ export default function App() {
       if(running){
         if(lastRef.current>0){
           const elapsed=Math.min(0.1,(now-lastRef.current)/1000);
-          const steps=Math.min(160,Math.max(1,Math.round(speed/10)))*substeps;
+          const steps=Math.max(1,Math.round(speed/10))*substeps;
           const stepSeconds=dt;
           let next=simRef.current;
           try{for(let i=0;i<steps;i++)next=stepVelocityVerlet(next,stepSeconds,config);}
