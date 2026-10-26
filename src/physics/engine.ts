@@ -95,9 +95,3 @@ export function totalEnergy(bodies: Body[], config: PhysicsConfig = DEFAULT_CONF
 export function totalMomentum(bodies: Body[]): Vector2 {
   return bodies.reduce((p, b) => add(p, scale(b.velocity, b.mass)), { x: 0, y: 0 });
 }
-
-export function centreOfMass(bodies: Body[]): Vector2 {
-  const totalMass = bodies.reduce((s, b) => s + b.mass, 0);
-  if (!totalMass) return { x: 0, y: 0 };
-  return bodies.reduce((p, b) => add(p, scale(b.position, b.mass / totalMass)), { x: 0, y: 0 });
-}
