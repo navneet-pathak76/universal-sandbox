@@ -2,6 +2,7 @@ import { G } from "./constants";
 import { add, isFiniteVector, scale, sub } from "./vector";
 import type { Body, PhysicsConfig, Vector2 } from "./types";
 
+
 export const DEFAULT_CONFIG: PhysicsConfig = {
   gravitationalConstant: G,
   softening: 1_000, // 1 km numerical guard, deliberately documented/configurable
@@ -59,7 +60,7 @@ export function stepVelocityVerlet(bodies: Body[], dtSeconds: number, config: Ph
   if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) throw new Error("Time step must be positive and finite.");
   validateBodies(bodies);
   const startAcc = accelerations(bodies, config);
-  const half = bodies.map((b, i) => b.fixed ? b.velocity : add(b.velocity, scale(startAcc[i], dtSeconds / 2)));
+  const half = bodies.map((b, i) => b.fixed ? { ...b.velocity } : add(b.velocity, scale(startAcc[i], dtSeconds / 2)));
   const moved = bodies.map((b, i) => b.fixed ? { ...b, position: { ...b.position }, velocity: { ...b.velocity }, trail: [...b.trail] } : {
     ...b,
     position: add(b.position, scale(half[i], dtSeconds)),
