@@ -31,6 +31,39 @@ function Planet({body,selected,onSelect,trailOn}:{body:Body3D;selected:boolean;o
   {trailOn&&body.trail3.length>1&&<Line points={body.trail3.filter((_,i)=>i%Math.max(1,Math.floor(body.trail3.length/700))===0).map(vec)} color={body.color} transparent opacity={.5} lineWidth={1}/>}
  </group>;
 }
+
+function makeDistantGalaxy(seed0:number){
+ let seed=seed0+100;
+ const rand=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296;};
+ const p:number[]=[];
+ for(let i=0;i<850;i++){const r=Math.sqrt(rand())*.8;const a=rand()*Math.PI*2;p.push(Math.cos(a)*r,(rand()-.5)*.08,Math.sin(a)*r);}
+ const g=new THREE.BufferGeometry();g.setAttribute("position",new THREE.Float32BufferAttribute(p,3));return g;
+}
+function GalaxyField(){
+ const geometry=useMemo(()=>{
+  const positions:number[]=[],colors:number[]=[];let seed=918273;
+  const rand=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296;};
+  for(let i=0;i<18000;i++){
+   const radius=.25+Math.pow(rand(),.62)*5.7;const arm=i%4;
+   const angle=arm*Math.PI/2+radius*.92+(rand()-.5)*.75;const thickness=(rand()-.5)*(.10+radius*.09);
+   positions.push(Math.cos(angle)*radius,thickness,Math.sin(angle)*radius);
+   const t=rand();colors.push(.55+t*.42,.62+t*.34,.8+t*.2);
+  }
+  const g=new THREE.BufferGeometry();g.setAttribute("position",new THREE.Float32BufferAttribute(positions,3));g.setAttribute("color",new THREE.Float32BufferAttribute(colors,3));return g;
+ },[]);
+ return <group rotation={[.25,.15,-.12]}>
+  <points geometry={geometry}><pointsMaterial size={.018} sizeAttenuation vertexColors transparent opacity={.9} depthWrite={false}/></points>
+  <mesh rotation={[-Math.PI/2,0,0]}><ringGeometry args={[.12,1.25,96]}/><meshBasicMaterial color="#6d8dff" transparent opacity={.045} side={THREE.DoubleSide}/></mesh>
+  {Array.from({length:7},(_,i)=><points key={i} position={[Math.sin(i*2.4)*11,Math.cos(i*1.7)*3,Math.cos(i*2.4)*11]} rotation={[i*.4,.2,i*.3]} geometry={makeDistantGalaxy(i)}><pointsMaterial size={.035} color={i%2?"#b6c7ff":"#ffcead"} transparent opacity={.8} sizeAttenuation/></points>)}
+ </group>;
+}
+function BlackHoleScene(){return <group position={[0,0,0]}>
+ <mesh><sphereGeometry args={[.45,48,48]}/><meshBasicMaterial color="#000000"/></mesh>
+ <mesh rotation={[.18,0,.12]}><torusGeometry args={[.72,.14,12,100]}/><meshBasicMaterial color="#ff8c43" transparent opacity={.8}/></mesh>
+ <mesh rotation={[.18,0,.12]}><torusGeometry args={[.98,.035,8,100]}/><meshBasicMaterial color="#f9d9a2" transparent opacity={.52}/></mesh>
+ <mesh><sphereGeometry args={[.57,48,48]}/><meshBasicMaterial color="#a5baff" wireframe transparent opacity={.08}/></mesh>
+ </group>;}
+
 function Scene({bodies,selectedId,onSelect,running,trailOn,simSpeed,stepSeconds,substeps,config,onTick}:{bodies:Body3D[];selectedId:string;onSelect:(id:string)=>void;running:boolean;trailOn:boolean;simSpeed:number;stepSeconds:number;substeps:number;config:PhysicsConfig;onTick:(b:Body3D[],dt:number)=>void}){
  const acc=useRef(0); const last=useRef(0);
  useFrame((state,delta)=>{if(!running)return;acc.current+=Math.min(delta,.05)*simSpeed;const step=stepSeconds;let n=Math.min(10,Math.floor(acc.current/Math.max(step/86400,.001)));if(n<1)n=1;acc.current=0;let next=bodies;try{for(let i=0;i<substeps;i++)next=step3D(next,step,config);if(n>1)for(let j=1;j<Math.min(n,4);j++)for(let i=0;i<substeps;i++)next=step3D(next,step,config);}catch(e){console.error(e);return;}onTick(next,step*substeps*Math.min(n,4));last.current=state.clock.elapsedTime;});
